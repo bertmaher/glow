@@ -510,7 +510,9 @@ private:
 void dumpAsciiImpl(const Tensor *T, llvm::raw_ostream &os);
 void dumpAsciiImpl(const Tensor *T);
 
-void dumpImpl(const Tensor *T, llvm::raw_ostream &os);
+void dumpImpl(const Tensor *T, llvm::raw_ostream &os,
+              unsigned maxNumElem = 100);
+void dumpImpl(const Tensor *T, unsigned maxNumElem);
 void dumpImpl(const Tensor *T);
 
 /// A class that provides indexed access to a tensor. This class has value
