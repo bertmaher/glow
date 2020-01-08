@@ -1,3 +1,21 @@
+# Example Backend
+
+This branch shows a very simple glow backend that can handle individual sparse
+lengths sum operators.  Look at lib/Backends/Example/ to see what it does.  To
+actually build and run this backend, do the following:
+```
+mkdir build
+cd build
+cmake .. -DGLOW_WITH_EXAMPLE=ON -G Ninja
+ninja ExampleOperatorTest
+./tests/ExampleOperatorTest --gtest_filter=*.SparseLengthsSum_Float/0
+```
+
+This runs one test from tests/unittests/OperatorTest, which performs a single
+sparse lengths sum operation.
+
+
+# Main Glow README
 ![Glow Logo](./docs/logo.svg)
 
 [![Build Status](https://travis-ci.org/pytorch/glow.svg?branch=master)](https://travis-ci.org/pytorch/glow)
