@@ -1,0 +1,51 @@
+; ModuleID = 'basic'
+source_filename = "basic"
+target datalayout = "e-m:o-i64:64-f80:128-n8:16:32:64-S128"
+target triple = "x86_64-apple-darwin18.5.0"
+
+define void @inner(i8* noalias) {
+preheader:
+  br label %loop
+
+loop:                                             ; preds = %loop, %preheader
+  %1 = phi i32 [ 0, %preheader ], [ %3, %loop ]
+  %2 = getelementptr i8, i8* %0, i32 %1
+  store i8 0, i8* %2
+  %3 = add i32 %1, 1
+  %4 = icmp slt i32 %3, 1024
+  br i1 %4, label %loop, label %exit
+
+exit:                                             ; preds = %loop
+  ret void
+}
+; ModuleID = 'basic'
+source_filename = "basic"
+target datalayout = "e-m:o-i64:64-f80:128-n8:16:32:64-S128"
+target triple = "x86_64-apple-darwin18.5.0"
+
+; Function Attrs: nofree norecurse nounwind writeonly
+define void @inner(i8* noalias nocapture) local_unnamed_addr #0 {
+preheader:
+  tail call void @llvm.memset.p0i8.i64(i8* align 1 %0, i8 0, i64 1024, i1 false)
+  ret void
+}
+
+; Function Attrs: argmemonly nounwind
+declare void @llvm.memset.p0i8.i64(i8* nocapture writeonly, i8, i64, i1 immarg) #1
+
+attributes #0 = { nofree norecurse nounwind writeonly }
+attributes #1 = { argmemonly nounwind }
+	.section	__TEXT,__text,regular,pure_instructions
+	.macosx_version_min 10, 14
+	.globl	_inner
+	.p2align	4, 0x90
+_inner:
+	pushq	%rax
+	movabsq	$___bzero, %rax
+	movl	$1024, %esi
+	callq	*%rax
+	popq	%rax
+	retq
+
+
+.subsections_via_symbols
