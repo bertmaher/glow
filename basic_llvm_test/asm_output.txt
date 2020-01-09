@@ -1,0 +1,11 @@
+	.section	__TEXT,__text,regular,pure_instructions
+	.macosx_version_min 10, 14
+	.globl	_inner
+	.p2align	4, 0x90
+_inner:
+	pushq	%rax
+	movabsq	$___bzero, %rax
+	movl	$1024, %esi
+	callq	*%rax             ;; why is it doing an indirect call??
+	popq	%rax
+	retq
