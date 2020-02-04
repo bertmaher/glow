@@ -14,13 +14,6 @@ if(POLICY CMP0075)
   cmake_policy(SET CMP0075 NEW)
 endif()
 
-set(CMAKE_THREAD_PREFER_PTHREAD ON)
-set(THREADS_PREFER_PTHREAD_FLAG ON)
-find_package(Threads REQUIRED)
-set(FOLLY_HAVE_PTHREAD "${CMAKE_USE_PTHREADS_INIT}")
-list(APPEND CMAKE_REQUIRED_LIBRARIES Threads::Threads)
-list(APPEND FOLLY_LINK_LIBRARIES Threads::Threads)
-
 find_package(Boost 1.51.0 MODULE
   COMPONENTS
     context
@@ -28,7 +21,6 @@ find_package(Boost 1.51.0 MODULE
     program_options
     regex
     system
-    thread
   REQUIRED
 )
 list(APPEND FOLLY_LINK_LIBRARIES ${Boost_LIBRARIES})
