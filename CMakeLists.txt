@@ -186,6 +186,12 @@ else()
   include_directories(${GLOW_THIRDPARTY_DIR}/fp16/include)
 endif()
 
+if(NOT EXISTS "${GLOW_THIRDPARTY_DIR}/folly/folly")
+  message(FATAL_ERROR "No folly git submodule. Run: git submodule update --init --recursive")
+else()
+  add_subdirectory(${GLOW_THIRDPARTY_DIR}/folly)
+endif()
+
 add_library(Miniz
   ${GLOW_THIRDPARTY_DIR}/miniz-2.0.8/miniz.c)
 target_include_directories(Miniz PUBLIC ${GLOW_THIRDPARTY_DIR}/miniz-2.0.8)
