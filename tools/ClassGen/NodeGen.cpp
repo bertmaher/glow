@@ -106,13 +106,11 @@ int main(int argc, char **argv) {
       .addMember(MemberType::VectorUnsigned, "Strides")
       .addMember(MemberType::VectorUnsigned, "Pads")
       .addMember(MemberType::Unsigned, "Group")
-      .addMember(MemberType::Boolean, "Groupwise")
       .addResultFromCtorArg()
       .setDocstring("Performs 2D Convolution using a given Input, Filter, and "
                     "Bias tensors, as well as provided Kernels, Strides, Pads, "
                     "and Group. Quantization parameters are provided by Scales "
-                    "and Offsets. If Groupwise is true then the quantization "
-                    "is per-group otherwise it is per-channel.");
+                    "and Offsets.");
 
   BB.newNode("Convolution3D")
       .addInput("Input")
@@ -985,12 +983,32 @@ int main(int argc, char **argv) {
   BB.newNode("ConvertTo")
       .addInput("Input")
       .addResultFromCtorArg()
+      .dataParallel()
       .setDocstring(
           "Convert the input from its current type to the destination "
           "type. The input and output types must have the same shapes. "
           "Moreover the input and output types must not be quantized types. "
           "Quantized types should use the appropriate Quantize, Dequantize, "
           "and Rescale nodes.");
+
+  //===--------------------------------------------------------------------===//
+  //                Post Processing
+  //===--------------------------------------------------------------------===//
+
+  BB.newNode("NonMaxSuppression")
+      .addInput("Boxes")
+      .addInput("Scores")
+      .addMember(MemberType::Unsigned, "CenterPointBox")
+      .addMember(MemberType::Unsigned, "MaxOutputBoxesPerClass")
+      .addMember(MemberType::Float, "IouThreshold")
+      .addMember(MemberType::Float, "ScoreThreshold")
+      .addMember(MemberType::Boolean, "IsTFVersion4")
+      .addResultFromCtorArg("Indices")
+      .addResultFromCtorArg("NumberOfSelectedIndices")
+      .setDocstring("This is a mix of ONNX and TF NMSv4. It supports multiple "
+                    "classes and does per class NMS. It also supports TF NMS "
+                    "V4 by outputting indices and scalar tensor with number of "
+                    "valid indices. It pads the rest with global MIN box.");
 
   //===--------------------------------------------------------------------===//
   //                Backend-Specific Nodes

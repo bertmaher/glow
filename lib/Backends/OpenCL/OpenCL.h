@@ -221,6 +221,7 @@ public:
 
   std::string getBackendName() const override { return getName(); }
   static std::string getName() { return "OpenCL"; }
+  static unsigned numDevices() { return 1; }
 
   std::unique_ptr<CompiledFunction>
   compileIR(std::unique_ptr<IRFunction> IR) const override;
@@ -234,7 +235,7 @@ public:
 
   bool isOpSupported(const NodeInfo &NI) const override;
 
-  bool verify(const Function &F) const override;
+  bool verify(const Function &F, bool verbose = true) const override;
   bool verify(const IRFunction &IR) const override;
 
   TensorLayoutCommon &getTensorLayoutRequirements() const override;

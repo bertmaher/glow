@@ -55,6 +55,15 @@ template <> struct AttributeAssigner<false, std::string> {
   }
 };
 
+// Specialization for StringRef type
+template <> struct AttributeAssigner<false, llvm::StringRef> {
+  static void assign(ONNX_NAMESPACE::AttributeProto *attr,
+                     const llvm::StringRef container) {
+    attr->set_type(ONNX_NAMESPACE::AttributeProto::STRING);
+    attr->set_s(container.str());
+  }
+};
+
 // Specialization for float type
 template <> struct AttributeAssigner<false, float> {
   static void assign(ONNX_NAMESPACE::AttributeProto *attr,
@@ -636,13 +645,19 @@ void ONNXModelWriter::writeTensor(const Tensor &T, TensorType *out) {
   out->set_raw_data(T.getUnsafePtr(), type.getSizeInBytes());
 
   if (type.isQuantizedType()) {
-    out->set_doc_string(type.getElementName());
+    // Format is ElemKind:scale:offset
+    out->set_doc_string(strFormat("%s:%f:%d", type.getElementName().data(),
+                                  T.getType().getScale(),
+                                  T.getType().getOffset()));
   }
 }
 
 void ONNXModelWriter::tensorShapeFromPlaceholder(const Placeholder *PH,
                                                  ValueInfoType *valueProto) {
   tensorShapeFromInput(PH->getName(), PH->getType(), valueProto);
+  if (PH->isStatic()) {
+    valueProto->set_doc_string("offline");
+  }
 }
 
 Error ONNXModelWriter::writeAllWithNode(const std::string &opName,
@@ -747,6 +762,12 @@ Error ONNXModelWriter::writeConvolution(const ConvolutionNode *node,
   // node is found for Result user then remove it, otherwise create a "mirror"
   // Transpose, i.e. NCHW2NHWC.
   assert(node->getLayout() == NHWC && "can only write NHWC Convolutions");
+
+  // Delegate writing quantized Convs to writeTensorwiseQuantizedConvolution.
+  if (isQuantizedElemKind(node->getInput().getElementType())) {
+    return writeTensorwiseQuantizedConvolution(node, graph);
+  }
+
   auto *proto = graph.add_node();
 
   // Use the output of transpose node.
@@ -791,6 +812,48 @@ Error ONNXModelWriter::writeConvolution(const ConvolutionNode *node,
   proto->set_op_type("Conv");
 
   return Error::success();
+}
+
+Error ONNXModelWriter::writeTensorwiseQuantizedConvolution(
+    const ConvolutionNode *node, GraphType &graph) {
+  auto *proto = graph.add_node();
+
+  // Add dictionary entries.
+  addValueAttribute(proto, "kernel_shape", node->getKernels());
+  addValueAttribute(proto, "strides", node->getStrides());
+  addValueAttribute(proto, "pads", node->getPads());
+  addValueAttribute(proto, "group", node->getGroup());
+  addValueAttribute(proto, "dilation", node->getDilation());
+
+  addValueAttribute(proto, "out_scale",
+                    node->getType(ConvolutionNode::ResultIdx)->getScale());
+  addValueAttribute(proto, "out_offset",
+                    node->getType(ConvolutionNode::ResultIdx)->getOffset());
+
+  return writeAllWithNode("Conv", node, graph, proto);
+}
+
+Error ONNXModelWriter::writeChannelwiseQuantizedConvolution(
+    const ChannelwiseQuantizedConvolutionNode *node, GraphType &graph) {
+  auto *proto = graph.add_node();
+
+  // Add dictionary entries.
+  addValueAttribute(proto, "kernel_shape", node->getKernels());
+  addValueAttribute(proto, "strides", node->getStrides());
+  addValueAttribute(proto, "pads", node->getPads());
+  addValueAttribute(proto, "group", node->getGroup());
+
+  addValueAttribute(
+      proto, "out_scale",
+      node->getType(ChannelwiseQuantizedConvolutionNode::ResultIdx)
+          ->getScale());
+  addValueAttribute(
+      proto, "out_offset",
+      node->getType(ChannelwiseQuantizedConvolutionNode::ResultIdx)
+          ->getOffset());
+
+  return writeAllWithNode("ChannelwiseQuantizedConvolution", node, graph,
+                          proto);
 }
 
 Error ONNXModelWriter::writeBatchedReduceMean(const BatchedReduceMeanNode *node,
@@ -1340,20 +1403,6 @@ Error ONNXModelWriter::writeInsertTensor(const InsertTensorNode *node,
   return writeAllWithNode("InsertTensor", node, graph, proto);
 }
 
-Error ONNXModelWriter::writeChannelwiseQuantizedConvolution(
-    const ChannelwiseQuantizedConvolutionNode *node, GraphType &graph) {
-  auto *proto = graph.add_node();
-  // Add dictionary entries.
-  addValueAttribute(proto, "kernel_shape", node->getKernels());
-  addValueAttribute(proto, "strides", node->getStrides());
-  addValueAttribute(proto, "pads", node->getPads());
-  addValueAttribute(proto, "group", node->getGroup());
-  addValueAttribute(proto, "group_wise", node->getGroupwise() ? 1 : 0);
-
-  return writeAllWithNode("ChannelwiseQuantizedConvolution", node, graph,
-                          proto);
-}
-
 Error ONNXModelWriter::writeSplat(const SplatNode *node, GraphType &graph) {
   // Conversion a scalar to a tensor is required.
   Tensor tensor(ElemKind::FloatTy, node->getResult().dims());
@@ -1426,6 +1475,7 @@ DEF_ALL_WRITER_NODE(RowwiseQuantizedSparseLengthsWeightedSum)
 DEF_ALL_WRITER_NODE(FusedRowwiseQuantizedSparseLengthsSum)
 DEF_ALL_WRITER_NODE(EmbeddingBagByteRowwiseOffsets)
 DEF_ALL_WRITER_NODE(FusedRowwiseQuantizedSparseLengthsWeightedSum)
+DEF_ALL_WRITER_NODE(NonMaxSuppression)
 
 Error ONNXModelWriter::writeClip(const ClipNode *node, GraphType &graph) {
   auto *proto = graph.add_node();
@@ -1463,9 +1513,11 @@ Error ONNXModelWriter::writeQuantize(const QuantizeNode *node,
                                      GraphType &graph) {
   auto *proto = graph.add_node();
   auto outTy = node->getResult().getType();
+
   // Add dictionary entries.
   addValueAttribute(proto, "scale", outTy->getScale());
   addValueAttribute(proto, "offset", outTy->getOffset());
+  addValueAttribute(proto, "elem_kind", outTy->getElementName());
 
   return writeAllWithNode("Quantize", node, graph, proto);
 }
@@ -1640,65 +1692,6 @@ DEF_UNSUPPORTED_NODE(SigmoidCrossEntropyWithLogits)
 DEF_UNSUPPORTED_NODE(LocalResponseNormalizationGrad)
 DEF_UNSUPPORTED_NODE(AdaptiveAvgPoolGrad)
 
-#ifdef GLOW_WITH_CPU
-
-Error ONNXModelWriter::writeCPUMaxSplat(const CPUMaxSplatNode *node,
-                                        GraphType &graph) {
-  auto *proto = graph.add_node();
-  // Add dictionary entries.
-  addValueAttribute(proto, "value", node->getSplatValue());
-
-  return writeAllWithNode("CPUMaxSplat", node, graph, proto);
-}
-
-Error ONNXModelWriter::writeCPUConvDKKC8(const CPUConvDKKC8Node *node,
-                                         GraphType &graph) {
-  auto *proto = graph.add_node();
-  // Add dictionary entries.
-  addValueAttribute(proto, "kernel_shape", node->getKernels());
-  addValueAttribute(proto, "strides", node->getStrides());
-  addValueAttribute(proto, "pads", node->getPads());
-  addValueAttribute(proto, "group", node->getGroup());
-
-  return writeAllWithNode("CPUConvDKKC8", node, graph, proto);
-}
-
-#endif // GLOW_WITH_CPU
-
-#ifdef GLOW_WITH_OPENCL
-
-Error ONNXModelWriter::writeOCLBatchedReduceAdd(
-    const OCLBatchedReduceAddNode *node, GraphType &graph) {
-  auto *proto = graph.add_node();
-  // Add dictionary entries.
-  addValueAttribute(proto, "axis", node->getAxis());
-  addValueAttribute(proto, "source_axis", node->getAxisSrcSliceSize());
-
-  return writeAllWithNode("OCLBatchedReduceAdd", node, graph, proto);
-}
-
-#endif // GLOW_WITH_OPENCL
-
-#ifdef GLOW_WITH_NNPI
-Error ONNXModelWriter::writeNNPICustomDSP(glow::NNPICustomDSPNode const *,
-                                          GraphType &graph) {
-  return MAKE_ERR("Unsupported Op for ONNX");
-}
-#endif // GLOW_WITH_NNPI
-
-#ifdef GLOW_WITH_HABANA
-Error ONNXModelWriter::writeHabanaFullyConnected(
-    glow::HabanaFullyConnectedNode const *, GraphType &graph) {
-  return MAKE_ERR("Unsupported Op for ONNX");
-}
-Error ONNXModelWriter::writeHabanaConvolution(
-    glow::HabanaConvolutionNode const *, GraphType &graph) {
-  return MAKE_ERR("Unsupported Op for ONNX");
-}
-Error ONNXModelWriter::writeHabanaConvolutionAdd(
-    glow::HabanaConvolutionAddNode const *, GraphType &graph) {
-  return MAKE_ERR("Unsupported Op for ONNX");
-}
-#endif // GLOW_WITH_HABANA
-
+// Include backend-specific ONNX model writers.
+#include "glow/ONNXModelWriterIncludes.h"
 } // namespace glow

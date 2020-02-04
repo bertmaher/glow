@@ -26,6 +26,7 @@
 #include "llvm/ADT/StringRef.h"
 
 #include <string>
+#include <unordered_set>
 
 namespace ONNX_NAMESPACE {
 class AttributeProto;
@@ -73,6 +74,9 @@ class ONNXModelLoader
   /// ONNX model op_version;
   size_t opsetVersion_;
 
+  /// A set of inputs which will be static placeholders.
+  std::unordered_set<std::string> staticInputs_;
+
   /// Load Constant ONNX operator.
   Error loadConstant(const ONNX_NAMESPACE::NodeProto &op,
                      const ArgumentDictionaryTy &dict);
@@ -84,6 +88,16 @@ class ONNXModelLoader
   /// Load Conv ONNX operator.
   Error loadConv(const ONNX_NAMESPACE::NodeProto &op,
                  const ArgumentDictionaryTy &dict);
+
+  /// Load ChannelwiseQuantizedConvolution Glow operator.
+  Error loadChannelwiseQuantizedConvolution(const ONNX_NAMESPACE::NodeProto &op,
+                                            const ArgumentDictionaryTy &dict);
+
+  /// Load Glow conv operator with quantized inputs. Since this isn't a normal
+  /// part of the ops supported by Glow, the assumption is that this op was
+  /// produced by Glow's on ONNXModelWriter and thus has NHWC layout for inputs.
+  Error loadTensorwiseQuantizedConvolution(const ONNX_NAMESPACE::NodeProto &op,
+                                           const ArgumentDictionaryTy &dict);
 
   /// Load MaxPool or AveragePool ONNX operator. \p typeName is the name of the
   /// ONNX operator being loaded, either MaxPool or AveragePool.
@@ -248,6 +262,11 @@ class ONNXModelLoader
   Error loadSplat(const ONNX_NAMESPACE::NodeProto &op,
                   const ArgumentDictionaryTy &dict);
 
+  /// Load NonMaxSuppression ONNX and TF NMSv4 operator.
+  /// The \p isV4 indicates whether this is ONNX or custom NMSv4 operator.
+  Error loadNonMaxSuppression(const ONNX_NAMESPACE::NodeProto &op,
+                              const ArgumentDictionaryTy &dict, bool isV4);
+
   /// Load Glow InsertTensor operator.
   Error loadInsertTensor(const ONNX_NAMESPACE::NodeProto &op,
                          const ArgumentDictionaryTy &dict);
@@ -307,15 +326,21 @@ protected:
                     llvm::ArrayRef<const char *> tensorNames,
                     llvm::ArrayRef<TypeRef> types);
 
+  /// Go through the ValueInfoProto of the inputs of the \p net and collect
+  /// static placeholders if it's marked in the ValueInfoProto.
+  Error collectStaticInputs(ONNX_NAMESPACE::GraphProto &net);
+
   /// Creates a ONNX model loader to build \p F.
   /// Loads the ONNIXFI \p model from memory of \p modelSize size,
   /// and \p weightsCount, and \p onnxTensorDescriptorV1 correspondent
   /// descriptors. Converts inputs into placeholder if requested \p
   /// loadInputsAsPlaceholders. Reports success/failure through optional
-  /// parameter \p errPtr.
+  /// parameter \p errPtr. This constructor always overrides the default
+  /// constant folding in loader flag with \p constFoldInLoader.
   ONNXModelLoader(const void *model, uint32_t modelSize, uint32_t weightsCount,
                   const onnxTensorDescriptorV1 *weightDescriptors, Function &F,
-                  bool loadInputsAsPlaceholders, Error *errPtr = nullptr);
+                  bool loadInputsAsPlaceholders, Error *errPtr = nullptr,
+                  bool constFoldInLoader = true);
 
   friend class ONNXIFIModelLoader;
 

@@ -308,6 +308,7 @@ OpenCLFunction::createProgram(const std::string &source,
   }
 
   const bool useDiskCache = deviceProgramCacheDir(deviceId) != "";
+  bool loadedFromCache = false;
 
   std::string cacheDir;
   std::string programFileName;
@@ -317,6 +318,7 @@ OpenCLFunction::createProgram(const std::string &source,
         diskCacheProgramFileName(deviceId, source, combinedOptions);
     program =
         loadProgramFromDiskCache(cacheDir, programFileName, ctx, deviceId);
+    loadedFromCache = program != nullptr;
   }
 
   if (program == nullptr) {
@@ -333,7 +335,7 @@ OpenCLFunction::createProgram(const std::string &source,
   }
   CHECK_EQ(err, CL_SUCCESS) << "clBuildProgram Failed.";
 
-  if (useDiskCache) {
+  if (useDiskCache && !loadedFromCache) {
     saveProgramToDiskCache(cacheDir, programFileName, program, ctx, deviceId);
   }
 
@@ -1870,11 +1872,11 @@ template <class T> static bool checkSquare(const T &I) {
   return true;
 }
 
-bool OCLBackend::verify(const Function &F) const {
+bool OCLBackend::verify(const Function &F, bool verbose) const {
   if (!F.verify(this)) {
     return false;
   }
-  if (!checkAllNodesSupported(F)) {
+  if (!checkAllNodesSupported(F, verbose)) {
     return false;
   }
   for (const Node &N : F.getNodes()) {

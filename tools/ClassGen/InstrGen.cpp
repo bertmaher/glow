@@ -103,7 +103,6 @@ int main(int argc, char **argv) {
       .addMember(MemberType::VectorUnsigned, "Strides")
       .addMember(MemberType::VectorUnsigned, "Pads")
       .addMember(MemberType::Unsigned, "Group")
-      .addMember(MemberType::Boolean, "Groupwise")
       .autoIRGen()
       .autoVerify(VerifyKind::SameElementType,
                   {"Dest", "Src", "Filter", "ElemKind::Int8QTy"});
@@ -791,6 +790,25 @@ int main(int argc, char **argv) {
       .addOperand("Result", OperandKind::Out)
       .addOperand("Input", OperandKind::In)
       .autoVerify(VerifyKind::SameShape, {"Result", "Input"})
+      .autoIRGen();
+
+  //===--------------------------------------------------------------------===//
+  //                Post Processing
+  //===--------------------------------------------------------------------===//
+
+  BB.newInstr("NonMaxSuppression")
+      .addOperand("Indices", OperandKind::Out)
+      .addOperand("NumberOfSelectedIndices", OperandKind::Out)
+      .addOperand("Boxes", OperandKind::In)
+      .addOperand("Scores", OperandKind::In)
+      .addMember(MemberType::Int64, "CenterPointBox")
+      .addMember(MemberType::Int64, "MaxOutputBoxesPerClass")
+      .addMember(MemberType::Float, "IouThreshold")
+      .addMember(MemberType::Float, "ScoreThreshold")
+      .addMember(MemberType::Boolean, "IsTFVersion4")
+      .autoVerify(VerifyKind::SameElementType, {"Boxes", "Scores"})
+      .autoVerify(VerifyKind::SameElementType,
+                  {"Indices", "NumberOfSelectedIndices"})
       .autoIRGen();
 
   //===--------------------------------------------------------------------===//

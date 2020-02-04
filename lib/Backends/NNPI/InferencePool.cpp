@@ -27,8 +27,8 @@
 #include <immintrin.h>
 static inline void convertI64ToI32(int64_t const *i64InputOrg,
                                    int32_t *i32OutputOrg, uint32_t elements) {
-  uint8_t i64Input = reinterpret_cast<const uint8_t *>(i64InputOrg);
-  uint8_t i32OutputOrg = reinterpret_cast<uint8_t *>(i32OutputOrg);
+  const uint8_t *i64Input = reinterpret_cast<const uint8_t *>(i64InputOrg);
+  uint8_t *i32Output = reinterpret_cast<uint8_t *>(i32OutputOrg);
   const __mmask8 masks[9] = {
       0b0, 0b1, 0b11, 0b111, 0b1111, 0b11111, 0b111111, 0b1111111, 0b11111111,
   };
@@ -126,7 +126,7 @@ InferenceThreadEnv::~InferenceThreadEnv() {
                          "Failed to destroy NNPI device resource");
     }
     for (auto &ph : staticInputs_) {
-      LOG_IF_NOT(ERROR, staticPlaceholderContainer_->ReleaseDeviceResource(ph))
+      LOG_IF_NOT(ERROR, staticPlaceholderContainer_->releaseDeviceResource(ph))
           << "Failed to release device resource for " << ph->getName().str();
     }
     for (auto &nr : deviceOutputs_) {
@@ -650,12 +650,10 @@ bool InferenceThreadEnv::init(
       allocatedDeviceInputs_.push_back(nr);
     } else {
       const auto PH = staticPlaceholders.at(nr.name);
-      nr = staticPlaceholderContainer_->AcquireDeviceResource(PH, nr);
+      nr = staticPlaceholderContainer_->acquireDeviceResource(PH, nr);
       // Exception for internal testing (ICE-24091).
-      if (deviceOptions_->internalTesting.get().empty()) {
-        LOG_AND_RETURN_IF(ERROR, nr.handle == NNPI_INVALID_NNPIHANDLE,
-                          "Failed to acquire device resource", false);
-      }
+      LOG_AND_RETURN_IF(ERROR, nr.handle == NNPI_INVALID_NNPIHANDLE,
+                        "Failed to acquire device resource", false);
     }
 
     deviceInputs_.push_back(nr);
@@ -805,10 +803,11 @@ Error InferencePoolEnv::init(
     return MAKE_ERR("InferencePool already initialized!");
   }
   numWorkers_ = numWorkers;
-  workersPool_ = std::make_unique<ThreadPool>(numWorkers_);
+  workersPool_ = glow::make_unique<ThreadPool>(numWorkers_);
   deviceTracing_ = deviceTracing;
 
   threadEnvs_.resize(numWorkers_);
+  threadEnvsFree_.resize(numWorkers_);
   if (threadEnvs_.size() != numWorkers_) {
     return MAKE_ERR("InferencePool failed to initialize thread env");
   }
@@ -869,7 +868,9 @@ Error InferencePoolEnv::init(
     if (!success) {
       return MAKE_ERR("Failed to initialize thread env");
     }
+    threadEnvsFree_.push_back(&tEnv);
   }
+
   if (deviceOptions_->inferOnDevice &&
       hostNetwork_ != NNPI_INVALID_NNPIHANDLE) {
     DBG_MEM_USAGE("call nnpiHostNetworkDestroy");
@@ -886,11 +887,22 @@ void InferencePoolEnv::stop(bool block) { workersPool_->stop(block); }
 void InferencePoolEnv::execute(RunIdentifierTy runId,
                                std::unique_ptr<ExecutionContext> ctx,
                                runtime::ResultCBTy resultCB) {
-  unsigned id = (workerIndex_++) % numWorkers_;
-  workersPool_->submit([this, env = &(threadEnvs_.at(id)), runId,
-                        ctx = std::move(ctx),
+  workersPool_->submit([this, runId, ctx = std::move(ctx),
                         resultCB = std::move(resultCB)]() mutable {
+    InferenceThreadEnv *env = nullptr;
+    {
+      const std::lock_guard<std::mutex> lock(threadEnvsFreeLock_);
+      CHECK(!threadEnvsFree_.empty());
+      env = *threadEnvsFree_.rbegin();
+      threadEnvsFree_.pop_back();
+    }
+
     env->execute(runId, std::move(ctx), resultCB);
+
+    {
+      const std::lock_guard<std::mutex> lock(threadEnvsFreeLock_);
+      threadEnvsFree_.push_back(env);
+    }
   });
 }
 

@@ -702,6 +702,24 @@ bool SinkCode::run(Function *F, const CompilationContext &cctx) {
       CN->getResult().replaceAllUsesOfWith(newTR);
       changed = true;
     }
+
+    // Sink Clip below Reshape nodes.
+    if (auto *RN = dyn_cast<ReshapeNode>(node)) {
+      auto *CN = dyn_cast<ClipNode>(RN->getInput());
+      if (!CN) {
+        continue;
+      }
+
+      ReshapeNode *newRN = F->createReshape(RN->getName(), CN->getInput(),
+                                            RN->getDims(), RN->getLayout());
+      ClipNode *newCN = F->createClip(CN->getName(), newRN->getResult(),
+                                      CN->getMin(), CN->getMax());
+      RN->getResult().replaceAllUsesOfWith(newCN->getResult());
+      newRN->setPredicate(RN->getPredicate());
+      newCN->setPredicate(CN->getPredicate());
+      changed = true;
+      continue;
+    }
   } // For all nodes in the graph.
 
   return changed;
@@ -3198,8 +3216,14 @@ bool FoldElemKindConversionIntoInputs::run(Function *F,
       // it is safe to do the requested conversion.
       NodeValue res = CTN ? CTN->getResult() : QN->getResult();
 
-      // Convert the type of the Placeholder to the conversion type.
-      P->setType(Storage::OutputIdx, res.getType());
+      // Convert the type of the Placeholder to the conversion type. If target
+      // type is fused call setTypeUnsafe because the shape can change in this
+      // case.
+      if (isFusedQuantizedElemKind(res.getElementType())) {
+        P->setTypeUnsafe(Storage::OutputIdx, res.getType());
+      } else {
+        P->setType(Storage::OutputIdx, res.getType());
+      }
 
       // Replace all uses of the original ConvertTo to the Placeholder.
       res.replaceAllUsesOfWith(P);
@@ -3472,7 +3496,7 @@ Error glow::optimizeFunction(Function *F, const Backend &B,
     // Cleanup from lowering via DCE.
     runDCEPass(F, cctx);
 
-    if (!B.verify(*F)) {
+    if (!B.verify(*F, cctx.verboseCompile)) {
       return MAKE_ERR(
           ErrorValue::ErrorCode::COMPILE_UNSUPPORTED_NODE_AFTER_OPTIMIZE,
           "Unsupported node(s) found after only-lowering path for Function " +
@@ -3534,7 +3558,7 @@ Error glow::optimizeFunction(Function *F, const Backend &B,
   // We already started using backend specific verification when the function
   // state became lowered. Do one more verification pass to make sure everything
   // is in order and to bail if it is not.
-  if (!B.verify(*F)) {
+  if (!B.verify(*F, cctx.verboseCompile)) {
     return MAKE_ERR(
         ErrorValue::ErrorCode::COMPILE_UNSUPPORTED_NODE_AFTER_OPTIMIZE,
         "Unsupported node(s) found after optimizing Function " +
@@ -3638,14 +3662,13 @@ static void parallelizeAndReplaceNode(Function *F, Node *curNode,
     // Calculate the out type of this chunk.
     const dim_t sliceStart = i * elemPerChunk + std::min(i, remain);
     const dim_t sliceEnd = sliceStart + elemPerChunk + ((i < remain) ? 1 : 0);
-    std::cout << "\tChunk " << i << ": start: " << sliceStart
-              << " end: " << sliceEnd << "\n";
+    VLOG(1) << "\tChunk " << i << ": start: " << sliceStart
+            << " end: " << sliceEnd << "\n";
     auto outDims = curNode->dims(resultIdx).vec();
     outDims[resultDim] = (sliceEnd - sliceStart);
-    std::cout << "outDims: ";
-    std::copy(outDims.begin(), outDims.end(),
-              std::ostream_iterator<int>(std::cout, " "));
-    std::cout << "\n";
+    for (auto outDim : outDims) {
+      VLOG(1) << "outDim: " << outDim << "\n";
+    }
 
     // Clone the original Node, so that it keeps all of the inputs/members of
     // the original Node. Then modify the output type so that its new shape is
@@ -3669,15 +3692,15 @@ static void parallelizeAndReplaceNode(Function *F, Node *curNode,
       sliceDimsStart[dim] = sliceStart;
       auto sliceDimsEnd = currInput.dims().vec();
       sliceDimsEnd[dim] = sliceEnd;
-      std::cout << "start: ";
-      std::copy(sliceDimsStart.begin(), sliceDimsStart.end(),
-                std::ostream_iterator<int>(std::cout, " "));
-      std::cout << "\nend: ";
-      std::copy(sliceDimsEnd.begin(), sliceDimsEnd.end(),
-                std::ostream_iterator<int>(std::cout, " "));
-      std::cout << "\n";
-      std::cout << "Input name: " << currInput.getNode()->getName().str()
-                << "\n";
+      VLOG(1) << "start: ";
+      for (auto sliceDimStart : sliceDimsStart) {
+        VLOG(1) << sliceDimStart << "\n";
+      }
+      VLOG(1) << "end: ";
+      for (auto sliceDimEnd : sliceDimsEnd) {
+        VLOG(1) << sliceDimEnd << "\n";
+      }
+      VLOG(1) << "Input name: " << currInput.getNode()->getName().str() << "\n";
 
       auto *inputSlice =
           F->createSlice("dp_slice." + currInput.getNode()->getName().str() +
@@ -3691,7 +3714,7 @@ static void parallelizeAndReplaceNode(Function *F, Node *curNode,
 
   // Now that we have split the node into many, concat all of the pieces back
   // together and replace the original by the concat.
-  std::cout << "\tCreating concat\n";
+  VLOG(1) << "Creating Concat";
   auto *concat = F->createConcat("concat." + curNode->getName().str(), newNodes,
                                  resultDim);
   curNode->getNthResult(resultIdx).replaceAllUsesOfWith(concat);
@@ -3718,7 +3741,8 @@ bool glow::parallelizeOps(
       ++numProcessedNodes;
     }
 
-    std::cout << "Node name: " << curNode->getName().str() << "\n";
+    VLOG(1) << "Attempting to Parallelizing Node: " << curNode->getName().str()
+            << "\n";
 
     // Use this vector to communicate what dims to split to
     // parallelizeAndReplaceNode(). -1 represents not splitting at all.
@@ -3782,8 +3806,9 @@ bool glow::parallelizeOps(
         break;
       }
       default:
-        std::cout << "Op Type: " << curNode->getKindName()
-                  << "not yet supported" << std::endl;
+        VLOG(1) << "Attempted to parallelize op type " << curNode->getKindName()
+                << "not yet supported"
+                << "\n";
         break;
       }
       break;
@@ -3809,6 +3834,9 @@ bool glow::parallelizeOps(
         break;
       }
       default:
+        VLOG(1) << "Attempted to parallelize op type " << curNode->getKindName()
+                << "not yet supported"
+                << "\n";
         break;
       }
       break;
@@ -3817,8 +3845,6 @@ bool glow::parallelizeOps(
     case ParallelTransformKind::None:
       break;
     }
-
-    std::cout << "Done : " << curNode->getName().str() << "\n";
   }
 
   // Because we transformed Node types unsafely, make sure all types of the

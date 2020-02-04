@@ -21,6 +21,8 @@
 #include "glow/Optimizer/Lower/Lower.h"
 #include "llvm/Support/CommandLine.h"
 
+#include <fstream>
+
 using namespace glow;
 
 namespace glow {
@@ -48,6 +50,16 @@ static llvm::cl::opt<bool, /* ExternalStorage */ true>
                                 llvm::cl::Optional, llvm::cl::init(false),
                                 llvm::cl::cat(optionsForNNPI));
 
+bool GlowUsePerPartitionIcetConfig = true;
+static llvm::cl::opt<bool, /* ExternalStorage */ true>
+    GlowUsePerPartitionIcetConfigOpt(
+        "glow_use_per_partition_icet_config",
+        llvm::cl::desc("Whether to load an"
+                       "icet_config.json file"
+                       "for each partition"),
+        llvm::cl::location(GlowUsePerPartitionIcetConfig), llvm::cl::Optional,
+        llvm::cl::init(false), llvm::cl::cat(optionsForNNPI));
+
 bool GlowDumpGraph = false;
 bool GlowDisableNNPITransforms = false;
 bool GlowDisableNNPIPrivateTransforms = false;
@@ -57,6 +69,24 @@ int32_t GlowNNPINumParallelChunks = 1;
 } // namespace glow
 
 NNPIBackendOptions NNPIBackend::backendOptions_;
+
+unsigned NNPIBackend::numDevices() {
+  // TODO: unify with numHabanaDevices. copy-paste with a different device
+  // name.
+  std::ifstream devices("/proc/bus/pci/devices");
+  std::string device;
+  unsigned count = 0;
+  while (std::getline(devices, device)) {
+    if (device.find("sph_pcie") != std::string::npos) {
+      count++;
+    }
+  }
+  if (count > 0) {
+    return count;
+  }
+  // TODO: Fall back to emulator since GLOW_NNPI is set. This feels hacky.
+  return 1;
+}
 
 bool NNPIBackend::isOpSupported(const NodeInfo &NI) const {
   switch (NI.getKind()) {

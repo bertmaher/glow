@@ -115,8 +115,9 @@ public:
   /// \returns whether the provided \p NI is supported by the backend.
   virtual bool isOpSupported(const NodeInfo &NI) const = 0;
 
-  /// \returns whether all nodes inside \p F are supported.
-  bool checkAllNodesSupported(const Function &F) const;
+  /// \returns whether all nodes inside \p F are supported. \p verbose
+  /// represents whether to print Nodes that are unsupported.
+  bool checkAllNodesSupported(const Function &F, bool verbose = true) const;
 
   /// \returns whether the provided \p F conforms to the backend-dependent graph
   /// constraints. Giving the backend an opportunity to check that everything
@@ -125,8 +126,9 @@ public:
   /// verifications a super-set of target independent Function::verify() by
   /// calling it in their overridden implementation. It is not a strict
   /// requirement, of course, in case they diverge / the backend has a good
-  /// reason not to call Function::verify().
-  virtual bool verify(const Function &F) const;
+  /// reason not to call Function::verify(). \p verbose represents whether to
+  /// print out nodes that are unsupported by the backend.
+  virtual bool verify(const Function &F, bool verbose = true) const;
 
   /// \returns whether the provided \p IR conforms to the backend-dependent
   /// graph constraints. Giving the backend an opportunity to check that
@@ -226,9 +228,15 @@ public:
     std::string getRegistrationKey() const override {                          \
       return BackendClass::getName();                                          \
     }                                                                          \
+    unsigned numDevices() const override {                                     \
+      return BackendClass::numDevices();                                       \
+    }                                                                          \
   };                                                                           \
   static RegisterFactory<std::string, FactoryName, Backend>                    \
       FactoryName##_REGISTERED;
+
+/// \returns the set of names for all available, registered backends.
+std::vector<std::string> getAvailableBackends();
 
 /// The backend name used in Glow quantization profiling.
 #ifdef GLOW_WITH_CPU
