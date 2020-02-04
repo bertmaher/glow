@@ -78,6 +78,7 @@ target_include_directories(
 )
 target_link_libraries(
   folly
-  PRIVATE
+  PUBLIC
     jemalloc
+  PRIVATE
     "${FOLLY_LINK_LIBRARIES}")
