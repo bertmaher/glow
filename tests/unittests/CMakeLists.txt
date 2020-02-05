@@ -137,7 +137,7 @@ add_glow_test(NAME GlowOnnxifiManagerTest
               WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(FollyTest FollyTest.cpp)
-target_link_libraries(FollyTest PRIVATE folly gtest TestMain)
+target_link_libraries(FollyTest PRIVATE ${BOOST_LIBRARIES} folly gtest TestMain)
 
 add_executable(GraphGradTest
                GraphGradTest.cpp)
