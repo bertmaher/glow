@@ -56,6 +56,7 @@ add_library(folly
   folly/folly/Format.cpp
   folly/folly/ScopeGuard.cpp
   folly/folly/experimental/TestUtil.cpp
+  folly/folly/experimental/io/HugePages.cpp
   folly/folly/hash/SpookyHashV2.cpp
   folly/folly/io/IOBufQueue.cpp
   folly/folly/io/IOBuf.cpp
