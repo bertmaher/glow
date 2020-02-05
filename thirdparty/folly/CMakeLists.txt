@@ -80,5 +80,4 @@ target_link_libraries(
   folly
   PUBLIC
     jemalloc
-  PRIVATE
     "${FOLLY_LINK_LIBRARIES}")
